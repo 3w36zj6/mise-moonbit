@@ -2,40 +2,58 @@
 -- Returns download information for a specific version
 -- Documentation: https://mise.jdx.dev/tool-plugin-development.html#preinstall-hook
 
+---@diagnostic disable: undefined-global
+-- luacheck: globals RUNTIME
+
 function PLUGIN:PreInstall(ctx)
-    local version = ctx.version
-    -- ctx.runtimeVersion contains the full version string if needed
+    local http = require("http")
 
-    -- Example 1: Simple binary download
-    -- local url = "https://github.com/<GITHUB_USER>/<GITHUB_REPO>/releases/download/v" .. version .. "/<TOOL>-linux-amd64"
+    local function url_escape_version(v)
+        -- Convert '+' to '%2B' (same behavior as the official install script)
+        return (v:gsub("+", "%%2B"))
+    end
 
-    -- Example 2: Platform-specific binary
-    -- local platform = get_platform() -- Uncomment the helper function above
-    -- local url = "https://github.com/<GITHUB_USER>/<GITHUB_REPO>/releases/download/v" .. version .. "/<TOOL>-" .. platform
+    local function get_target()
+        -- The upstream script checks `uname -ms`, while in mise/vfox we use the injected `RUNTIME` object
+        local os_name = (RUNTIME.osType or ""):lower()
+        local arch = RUNTIME.archType
 
-    -- Example 3: Archive (tar.gz, zip) - mise will extract automatically
-    -- local url = "https://github.com/<GITHUB_USER>/<GITHUB_REPO>/releases/download/v" .. version .. "/<TOOL>-" .. version .. "-linux-amd64.tar.gz"
+        if os_name == "darwin" and arch == "arm64" then
+            return "darwin-aarch64"
+        end
+        if os_name == "darwin" and arch == "amd64" then
+            return "darwin-x86_64"
+        end
+        if os_name == "linux" and arch == "amd64" then
+            return "linux-x86_64"
+        end
 
-    -- Example 4: Raw file from repository
-    -- local url = "https://raw.githubusercontent.com/<GITHUB_USER>/<GITHUB_REPO>/" .. version .. "/bin/<TOOL>"
+        error("Unsupported platform: " .. tostring(RUNTIME.osType) .. " " .. tostring(RUNTIME.archType))
+    end
 
-    -- Replace with your actual download URL pattern
-    local url = "https://example.com/<TOOL>/releases/download/" .. version .. "/<TOOL>"
+    local cli_moonbit = os.getenv("CLI_MOONBIT") or "https://cli.moonbitlang.com"
+    local version = ctx.version or os.getenv("MOONBIT_INSTALL_VERSION") or "latest"
+    local target = get_target()
 
-    -- Optional: Fetch checksum for verification
-    -- local sha256 = fetch_checksum(version) -- Implement if checksums are available
+    if os.getenv("MOONBIT_INSTALL_DEV") ~= nil and os.getenv("MOONBIT_INSTALL_DEV") ~= "" then
+        target = target .. "-dev"
+    end
+
+    local escaped_version = url_escape_version(version)
+    local url = cli_moonbit .. "/binaries/" .. escaped_version .. "/moonbit-" .. target .. ".tar.gz"
+
+    local sha256
+    local sha_url = url .. ".sha256"
+    local resp, err = http.get({ url = sha_url })
+    if err == nil and resp ~= nil and resp.status_code == 200 and resp.body ~= nil then
+        sha256 = (resp.body:match("^%s*([0-9a-fA-F]+)%s"))
+    end
 
     return {
         version = version,
         url = url,
-        -- sha256 = sha256, -- Optional but recommended for security
-        note = "Downloading <TOOL> " .. version,
-        -- addition = { -- Optional: download additional components
-        --     {
-        --         name = "component",
-        --         url = "https://example.com/component.tar.gz"
-        --     }
-        -- }
+        sha256 = sha256,
+        note = "Downloading moonbit " .. version,
     }
 end
 

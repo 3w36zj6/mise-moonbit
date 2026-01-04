@@ -16,6 +16,10 @@ function PLUGIN:EnvKeys(ctx)
     -- This adds the bin directory to PATH so the tool can be executed
     return {
         {
+            key = "MOON_HOME",
+            value = mainPath,
+        },
+        {
             key = "PATH",
             value = mainPath .. "/bin",
         },

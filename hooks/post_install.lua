@@ -3,73 +3,115 @@
 -- Documentation: https://mise.jdx.dev/tool-plugin-development.html#postinstall-hook
 
 function PLUGIN:PostInstall(ctx)
-    -- Available context:
-    -- ctx.rootPath - Root installation path
-    -- ctx.runtimeVersion - Full version string
-    -- ctx.sdkInfo[PLUGIN.name] - SDK information
-
     local sdkInfo = ctx.sdkInfo[PLUGIN.name]
     local path = sdkInfo.path
-    -- local version = sdkInfo.version
+    local version = sdkInfo.version or ctx.runtimeVersion or "latest"
 
-    -- Example 1: Single binary file (most common)
-    -- The file is downloaded directly, move it to bin/ and make executable
-    os.execute("mkdir -p " .. path .. "/bin")
-
-    local srcFile = path .. "/" .. PLUGIN.name
-    local destFile = path .. "/bin/" .. PLUGIN.name
-
-    -- Move and make executable
-    local result = os.execute("mv " .. srcFile .. " " .. destFile .. " && chmod +x " .. destFile)
-    if result ~= 0 then
-        error("Failed to install " .. PLUGIN.name .. " binary")
+    local function sh_quote(s)
+        -- POSIX shell single-quote escaping
+        return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
     end
 
-    -- Verify installation works
-    local testResult = os.execute(destFile .. " --version > /dev/null 2>&1")
-    if testResult ~= 0 then
-        error(PLUGIN.name .. " installation appears to be broken")
+    local function run(cmd, err_msg)
+        local code = os.execute(cmd)
+        if code ~= 0 then
+            error(err_msg .. " (cmd=" .. cmd .. ")")
+        end
     end
 
-    -- Example 2: Archive already extracted by mise
-    -- If pre_install returns a .tar.gz or .zip, mise extracts it automatically
-    -- You might just need to move files around:
-    --[[
-    os.execute("mkdir -p " .. path .. "/bin")
-    os.execute("mv " .. path .. "/<TOOL>-*/bin/* " .. path .. "/bin/")
-    os.execute("chmod +x " .. path .. "/bin/*")
-    --]]
+    local cli_moonbit = os.getenv("CLI_MOONBIT") or "https://cli.moonbitlang.com"
+    local bin_dir = path .. "/bin"
+    local exe = bin_dir .. "/moon"
+    local lib_dir = path .. "/lib"
 
-    -- Example 3: Multiple binaries
-    --[[
-    os.execute("mkdir -p " .. path .. "/bin")
-    local binaries = {"tool1", "tool2", "tool3"}
-    for _, binary in ipairs(binaries) do
-        os.execute("mv " .. path .. "/" .. binary .. " " .. path .. "/bin/")
-        os.execute("chmod +x " .. path .. "/bin/" .. binary)
-    end
-    --]]
+    -- Make bundled binaries executable
+    run("test -d " .. sh_quote(bin_dir) .. "", "bin directory not found after extraction")
+    run(
+        "find " .. sh_quote(bin_dir) .. " -maxdepth 1 -type f -exec chmod +x {} +",
+        "Failed to make moonbit binaries executable"
+    )
+    -- Make internal/tcc executable if present
+    os.execute(
+        "test -f " .. sh_quote(bin_dir .. "/internal/tcc") .. " && chmod +x " .. sh_quote(bin_dir .. "/internal/tcc")
+    )
 
-    -- Example 4: No action needed
-    -- If the archive already has the correct structure (bin/ directory),
-    -- you might not need to do anything:
-    --[[
-    -- Archive already contains bin/<TOOL>, just verify it works
-    local testResult = os.execute(path .. "/bin/<TOOL> --version > /dev/null 2>&1")
-    if testResult ~= 0 then
-        error("<TOOL> installation appears to be broken")
-    end
-    --]]
+    -- Create AGENTS.md symlink if available
+    local prompt_md = bin_dir .. "/internal/moon-pilot/lib/prompt/moonbitlang.mbt.md"
+    local agents_md = path .. "/AGENTS.md"
+    os.execute(
+        "test -f "
+            .. sh_quote(prompt_md)
+            .. " && rm -f "
+            .. sh_quote(agents_md)
+            .. " && ln -s "
+            .. sh_quote(prompt_md)
+            .. " "
+            .. sh_quote(agents_md)
+    )
 
-    -- Example 5: Platform-specific setup
-    --[[
-    -- RUNTIME object is provided by mise/vfox
-    if RUNTIME.osType ~= "Windows" then
-        -- Unix-like systems: make binaries executable
-        os.execute("chmod +x " .. path .. "/bin/*")
-    else
-        -- Windows-specific setup if needed
-        -- e.g., adding .exe extension or handling batch files
+    -- Download and extract core
+    run("mkdir -p " .. sh_quote(lib_dir), "Failed to create lib directory")
+    run("rm -rf " .. sh_quote(lib_dir .. "/core"), "Failed to remove existing core")
+
+    local core_uri = cli_moonbit .. "/cores/core-" .. version .. ".tar.gz"
+    local core_dest = lib_dir .. "/core.tar.gz"
+    run(
+        "curl --fail --location --progress-bar --output " .. sh_quote(core_dest) .. " " .. sh_quote(core_uri),
+        'Failed to download core from "' .. core_uri .. '"'
+    )
+    run(
+        "tar xf " .. sh_quote(core_dest) .. " --directory=" .. sh_quote(lib_dir),
+        'Failed to extract core to "' .. lib_dir .. '"'
+    )
+    run("rm -f " .. sh_quote(core_dest), "Failed to remove core archive")
+
+    -- Bundle core
+    run("test -x " .. sh_quote(exe), "moon executable not found")
+
+    -- Run bundling with PATH set to the installation bin
+    local path_env = "PATH=" .. sh_quote(bin_dir)
+    local moon_home_env = "MOON_HOME=" .. sh_quote(path)
+    local src_dir = sh_quote(lib_dir .. "/core")
+
+    run(
+        path_env
+            .. " "
+            .. moon_home_env
+            .. " "
+            .. sh_quote(exe)
+            .. " bundle --warn-list -a --all --source-dir "
+            .. src_dir,
+        "Failed to bundle core"
+    )
+
+    if version == "nightly" then
+        run(
+            path_env
+                .. " "
+                .. moon_home_env
+                .. " "
+                .. sh_quote(exe)
+                .. " bundle --warn-list -a --target llvm --source-dir "
+                .. src_dir,
+            "Failed to bundle core for llvm backend"
+        )
     end
-    --]]
+
+    run(
+        path_env
+            .. " "
+            .. moon_home_env
+            .. " "
+            .. sh_quote(exe)
+            .. " bundle --warn-list -a --target wasm-gc --source-dir "
+            .. src_dir
+            .. " --quiet",
+        "Failed to bundle core to wasm-gc"
+    )
+
+    -- Quick smoke test
+    local ok = os.execute(sh_quote(exe) .. " version > /dev/null 2>&1")
+    if ok ~= 0 then
+        error("moon installation appears to be broken")
+    end
 end
