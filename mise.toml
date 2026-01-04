@@ -1,5 +1,7 @@
 [env]
 MISE_USE_VERSIONS_HOST = "0"
+# https://github.com/luarocks/luarocks/issues/1851
+ASDF_LUA_LUAROCKS_VERSION = "3.12.2"
 
 [tools]
 actionlint = "latest"
