@@ -6,6 +6,7 @@ function PLUGIN:PostInstall(ctx)
     local sdkInfo = ctx.sdkInfo[PLUGIN.name]
     local path = sdkInfo.path
     local version = sdkInfo.version or ctx.runtimeVersion or "latest"
+    local escaped_version = (tostring(version):gsub("+", "%%2B"))
 
     local function sh_quote(s)
         -- POSIX shell single-quote escaping
@@ -53,7 +54,7 @@ function PLUGIN:PostInstall(ctx)
     run("mkdir -p " .. sh_quote(lib_dir), "Failed to create lib directory")
     run("rm -rf " .. sh_quote(lib_dir .. "/core"), "Failed to remove existing core")
 
-    local core_uri = cli_moonbit .. "/cores/core-" .. version .. ".tar.gz"
+    local core_uri = cli_moonbit .. "/cores/core-" .. escaped_version .. ".tar.gz"
     local core_dest = lib_dir .. "/core.tar.gz"
     run(
         "curl --fail --location --progress-bar --output " .. sh_quote(core_dest) .. " " .. sh_quote(core_uri),
