@@ -72,16 +72,13 @@ function PLUGIN:PostInstall(ctx)
     -- Run bundling with PATH set to the installation bin
     local path_env = "PATH=" .. sh_quote(bin_dir)
     local moon_home_env = "MOON_HOME=" .. sh_quote(path)
-    local src_dir = sh_quote(lib_dir .. "/core")
+    local core_dir = lib_dir .. "/core"
+    local manifest_path = core_dir .. "/moon.mod.json"
+    run("test -f " .. sh_quote(manifest_path), 'core manifest not found: "' .. manifest_path .. '"')
+    local bundle_source_arg = "--manifest-path " .. sh_quote(manifest_path)
 
     run(
-        path_env
-            .. " "
-            .. moon_home_env
-            .. " "
-            .. sh_quote(exe)
-            .. " bundle --warn-list -a --all --source-dir "
-            .. src_dir,
+        path_env .. " " .. moon_home_env .. " " .. sh_quote(exe) .. " bundle --warn-list -a --all " .. bundle_source_arg,
         "Failed to bundle core"
     )
 
@@ -92,8 +89,8 @@ function PLUGIN:PostInstall(ctx)
                 .. moon_home_env
                 .. " "
                 .. sh_quote(exe)
-                .. " bundle --warn-list -a --target llvm --source-dir "
-                .. src_dir,
+                .. " bundle --warn-list -a --target llvm "
+                .. bundle_source_arg,
             "Failed to bundle core for llvm backend"
         )
     end
@@ -104,8 +101,8 @@ function PLUGIN:PostInstall(ctx)
             .. moon_home_env
             .. " "
             .. sh_quote(exe)
-            .. " bundle --warn-list -a --target wasm-gc --source-dir "
-            .. src_dir
+            .. " bundle --warn-list -a --target wasm-gc "
+            .. bundle_source_arg
             .. " --quiet",
         "Failed to bundle core to wasm-gc"
     )
